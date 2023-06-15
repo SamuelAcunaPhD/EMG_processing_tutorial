@@ -8,6 +8,6 @@ Department of Bioengineering
 George Mason University 
 
 sacuna2@gmu.edu
-https://samuelacunaphd.wordpress.com/
+https://www.samuelacunaphd.com
 @SamuelAcunaPhD
 
