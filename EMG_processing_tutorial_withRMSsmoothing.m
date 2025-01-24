@@ -1,4 +1,4 @@
-% Filename: EMG_processing_tutorial.m
+% Filename: EMG_processing_tutorial_withRMSsmoothing.m
 % Author:   Samuel Acuña
 % Date:     11 May 2018
 % Description:
@@ -26,27 +26,9 @@ load('EMG_processing_tutorial_DATA.mat');
 %   trial_data.time        : time of each sample of data
 %   trial_data.heelStrikes : instances of heel strikes between steps
 
-return
-%% STEP 1: EXAMINE RAW EMG DATA
-figure(1);
-h1 = plot(trial_data.time, trial_data.emg,'color',[  0    0.4470    0.7410]);
-title(['EMG: ' trial_data.label]);
-xlabel('time (sec)'); xlim([0 60]);
-ylabel('EMG (volts)');
-legend([h1],'raw EMG');
 
 
-
-%% STEP 2: VISUALIZE HEEL STRIKES
-figure(1); hold on;
-scale = max(trial_data.emg);
-hs_x = [trial_data.heelStrikes, trial_data.heelStrikes]';
-hs_y = [zeros(length(trial_data.heelStrikes),1)-(scale/2), zeros(length(trial_data.heelStrikes),1)+(scale/2)]';
-h2 = plot(hs_x,hs_y,'r');
-hold off;
-legend([h1 h2(1)],{'raw EMG', 'heel strikes'});
-
-%% STEP 3: BANDPASS FILTER EMG
+%% STEP 1: BANDPASS FILTER EMG, 
 % the bandpass gets rid of any noise that isnt part of EMG data. Most EMG
 % power is between 5-500 Hz
 % low cutoff: want to be high enough to get rid of motion artifacts and drift. No higher than 10 hz, per ISEK guidelines
@@ -55,70 +37,95 @@ BP = [10 500]; % bandpass filter parameters in Hz [low cutoff, high cutoff]
 [b_BP,a_BP]=butter(4,BP/(trial_data.freq/2)); % bandpass filter coefficients. (4th order butterworth)
 emg_BP = filtfilt(b_BP,a_BP,trial_data.emg); % zero phase lag filter
 
-figure(1); hold on;
-h3 = plot(trial_data.time,emg_BP,'color',[0.6875    0.7656    0.8672]);
+figure(1);
+title(['EMG: ' trial_data.label]);
+xlabel('time (sec)'); xlim([0 60]);
+ylabel('EMG (volts)');
+h1 = plot(trial_data.time,emg_BP,'color',[0.6875    0.7656    0.8672]);
 hold off;
-legend([h1 h2(1) h3],{'raw EMG', 'heel strikes', 'bandpass EMG'});
-%% STEP 4: FULL-WAVE RECTIFY EMG
-% just the absolute value
-emg_ABS = abs(emg_BP);
+
+return
+%% STEP 2: Use RMS smoothing on data
+
+windowlength = 250;
+overlap = 240;  %windowlength - 1;
+emg_RMS = rms_gbiomech(emg_BP,windowlength,overlap);
+
+
+delta = windowlength - overlap;
+indices = 1:delta:length(trial_data.time);
+time_RMS = trial_data.time(indices);
 
 figure(1); hold on;
-h4 = plot(trial_data.time,emg_ABS,'color',[0.6758    0.8438    0.8984]);
+h2 = plot(time_RMS,emg_RMS,'b','LineWidth',2);
 hold off;
-legend([h1 h2(1) h3 h4],{'raw EMG', 'heel strikes', 'bandpass EMG', 'rectify EMG'});
 
-%% STEP 5: LINEAR ENVELOPE
-% low pass filter
+
+%% STEP 3: compare to non-RMS smoothed data
+
+emg_ABS = abs(emg_BP); % full wave rectified
 LP = 10; % low pass filter for linear envelope, in Hz
 [b_LP,a_LP]=butter(4,LP/(trial_data.freq/2),'low'); % linear envelope filter
 emg_ENV = filtfilt(b_LP,a_LP,emg_ABS);
 
 figure(1); hold on;
-h5 = plot(trial_data.time,emg_ENV,'color',[0  0 0],'LineWidth',2);
+h3 = plot(trial_data.time,emg_ENV,'color',[0  0 0],'LineWidth',2);
 hold off;
-legend([h1 h2(1) h3 h4 h5],{'raw EMG', 'heel strikes', 'bandpass EMG', 'rectify EMG', 'envelope EMG'});
+legend([h1 h2 h3],{'bandpass EMG', 'RMS smoothed EMG', 'non-smooth envelope EMG'});
 
 
-%% STEP 6: NORMALIZE AMPLITUDE
+%% STEP 4: NORMALIZE AMPLITUDE
 % scaled to the max value (could also do RMS, or max voluntary contraction)
+emg_NORM_RMS = emg_RMS/max(emg_RMS);
 emg_NORM = emg_ENV/max(emg_ENV);
 
-figure(2);
-h6 = plot(trial_data.time,emg_NORM,'color',[ 0    0.4470    0.7410],'LineWidth',2);
+figure(2); hold on;
+h1 = plot(trial_data.time,emg_NORM,'color',[ 0    0    0],'LineWidth',2);
+h2 = plot(time_RMS,emg_NORM_RMS,'b','LineWidth',2);
 title(['EMG: ' trial_data.label]);
 xlabel('time (sec)'); xlim([0 60]);
 ylabel('normalized EMG'); ylim([0 1.5]);
-legend([h6],'normalized linear envelope of EMG');
+legend([h1 h2],'normalized linear envelope of EMG', 'normalized RMS smoothed EMG');
 
-%% STEP 7: TIME NORMALIZE BY A STRIDE
+%% STEP 5: TIME NORMALIZE BY A STRIDE
 
 % divides the EMG signals insto strides
 npts = 101; % points per gait cycle
 nStrides = length(trial_data.heelStrikes)-1; % number of complete gait cycles
 emg_Strides = zeros(101,nStrides); %preallocate
+emg_Strides_RMS = zeros(101,nStrides); %preallocate
 for j = 1:nStrides
     j1 = find(trial_data.time>trial_data.heelStrikes(j),1); % get index of time at first heel strike
     j2 = find(trial_data.time>trial_data.heelStrikes(j+1),1); % get index of time at second heel strike
     emg_Strides(:,j) = normcycle(emg_NORM(j1:j2),npts); % time normalize
+    
+    k1 = find(time_RMS>trial_data.heelStrikes(j),1);
+    k2 = find(time_RMS>trial_data.heelStrikes(j+1),1);
+    emg_Strides_RMS(:,j) = normcycle(emg_NORM_RMS(k1:k2),npts); % time normalize
 end
+
 
 % FIND AVERAGE EMG over a stride
 emg_AVG = mean(emg_Strides,2); %average EMG of each stride
 emg_STD = std(emg_Strides')'; % standard deviation
-
+emg_AVG_RMS = mean(emg_Strides_RMS,2); %average EMG of each stride
+emg_STD_RMS = std(emg_Strides_RMS')'; % standard deviation
 
 % PLOT
 figure(3); subplot(2,1,1); 
-shadedErrorBar([0:100]',emg_AVG,emg_STD);
+shadedErrorBar([0:100]',emg_AVG,emg_STD,'k',1);
+hold on
+shadedErrorBar([0:100]',emg_AVG_RMS,emg_STD_RMS,'b',1);
 title(['EMG: ' trial_data.label]);
 xlabel('Gait Cycle (0-100%)'); xlim([0 100]);
 ylabel('normalized EMG'); ylim([0 1.5]);
-legend('EMG (AVG ± STD)')
+legend('EMG (AVG ± STD)','RMS Smoothed EMG (AVG ± STD)')
+
 
 figure(3); subplot(2,1,2); hold on;
 for i = 1:nStrides
-        plot([0:100]',emg_Strides(:,i));
+        plot([0:100]',emg_Strides(:,i),'k');
+        plot([0:100]',emg_Strides_RMS(:,i),'b');
 end
 hold off;
 title(['EMG for every stride']);
@@ -126,6 +133,10 @@ xlabel('Gait Cycle (0-100%)'); xlim([0 100]);
 ylabel('normalized EMG'); ylim([0 1.5]);
 
 
+
+
+
+%%%%%%%%%%%%%%
 
 function yf = normcycle(y,n,x)
 % yf = normcycle(y,n,x)
@@ -162,27 +173,41 @@ yf=interp1(x,y,kk,'*pchip');
 
 end
 
-function RMS=rms_gbiomech(signal,janelamento,overlap,zeropad)
+function RMS=rms_gbiomech(signal,windowlength,overlap)
+% adapted from: http://g-biomech.blogspot.com/2014/07/emg-signal-processing-smoothing-root.html
 
-delta = janelamento - overlap;
+% i think the current code assumes an overlapp of windowlength-1
 
-indices = 1:delta:length(signal);
-
-if length(signal) - indices(end) + 1 < janelamento
-    if zeropad
-        signal(end+1:indices(end)+janelamento-1) = 0;
-    else
-        indices = indices(1:find(indices+janelamento-1 <= length(signal), 1, 'last'));
-    end
+if mod(windowlength,2) % if odd
+    error('windowlength must be even integer')
 end
+    
+% zeropad the signal
+%if length(signal) - indices(end) + 1 < windowlength
 
-RMS = zeros(1, length(indices));
+%     % add zeros to the beginning and end of the signal
+%     newsignal = [zeros(windowlength/2,1); signal; zeros(windowlength/2,1)];
+%     signal = newsignal;
+
+%end
+
+delta = windowlength - overlap;
+indices = 1:delta:length(signal);
+RMS = zeros(length(indices),1);
 
 signal = signal.^2;
 
 index = 0;
+
 for i = indices
     index = index+1;
-    RMS(index) = sqrt(mean(signal(i:i+janelamento-1)));
+
+    if i <= windowlength/2 % for beginning of signal, look forward in time
+        RMS(index) = sqrt(mean(signal(1:windowlength)));
+    elseif i > indices(end)-windowlength/2   % for end of signal, look backard in time.
+        RMS(index) = sqrt(mean(signal(end-windowlength/2:end)));
+    else % for all, look forward and backwards in time
+        RMS(index) = sqrt(mean(signal(i-windowlength/2:i+windowlength/2)));
+    end
 end
 end
